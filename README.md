@@ -1,5 +1,9 @@
 # Aerugo Cache
 
+<p align="center">
+  <img src="assets/aerugo-logo.png" alt="Aerugo logo" width="720">
+</p>
+
 Aerugo Cache is a small Redis-compatible in-memory cache written in Rust.
 
 The goal is not to replace Redis. The goal is to build a real networked system
