@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::{
     protocol::Frame,
-    storage::{MemoryStore, StoreError},
+    storage::{MemoryStore, StoreError, StoreStats},
 };
 
 #[derive(Debug, Error)]
@@ -28,6 +28,8 @@ pub enum CommandError {
     Unknown(String),
     #[error("WRONGTYPE Operation against a key holding the wrong kind of value")]
     WrongType,
+    #[error("OOM command not allowed when memory limit would be exceeded")]
+    OutOfMemory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +49,9 @@ pub enum Command {
     Lpop { key: String },
     Rpop { key: String },
     Lrange { key: String, start: i64, stop: i64 },
+    DbSize,
+    Info,
+    AerugoStats,
 }
 
 impl Command {
@@ -150,6 +155,18 @@ impl Command {
                 }),
                 _ => Err(CommandError::WrongArity("LRANGE")),
             },
+            "DBSIZE" => match args.len() {
+                0 => Ok(Self::DbSize),
+                _ => Err(CommandError::WrongArity("DBSIZE")),
+            },
+            "INFO" => match args.len() {
+                0 => Ok(Self::Info),
+                _ => Err(CommandError::WrongArity("INFO")),
+            },
+            "AERUGO.STATS" => match args.len() {
+                0 => Ok(Self::AerugoStats),
+                _ => Err(CommandError::WrongArity("AERUGO.STATS")),
+            },
             other => Err(CommandError::Unknown(other.to_string())),
         }
     }
@@ -160,7 +177,7 @@ impl Command {
             Self::Ping(Some(value)) => Ok(Frame::Bulk(value)),
             Self::Echo(value) => Ok(Frame::Bulk(value)),
             Self::Set { key, value } => {
-                store.set(key, value).await;
+                store.set(key, value).await?;
                 Ok(Frame::Simple("OK".to_string()))
             }
             Self::Get { key } => Ok(match store.get(&key).await? {
@@ -211,12 +228,14 @@ impl Command {
                     .map(Frame::Bulk)
                     .collect(),
             )),
+            Self::DbSize => Ok(Frame::Integer(store.stats().await.total_keys as i64)),
+            Self::Info | Self::AerugoStats => Ok(Frame::Bulk(format_stats(store.stats().await))),
         }
     }
 
     pub fn error_frame(error: &CommandError) -> Frame {
         match error {
-            CommandError::WrongType => Frame::Error(error.to_string()),
+            CommandError::WrongType | CommandError::OutOfMemory => Frame::Error(error.to_string()),
             _ => Frame::Error(format!("ERR {error}")),
         }
     }
@@ -262,7 +281,10 @@ impl Command {
             | Self::Get { .. }
             | Self::Exists { .. }
             | Self::Ttl { .. }
-            | Self::Lrange { .. } => None,
+            | Self::Lrange { .. }
+            | Self::DbSize
+            | Self::Info
+            | Self::AerugoStats => None,
         }
     }
 }
@@ -271,6 +293,7 @@ impl From<StoreError> for CommandError {
     fn from(error: StoreError) -> Self {
         match error {
             StoreError::WrongType => Self::WrongType,
+            StoreError::OutOfMemory => Self::OutOfMemory,
         }
     }
 }
@@ -344,6 +367,47 @@ fn unix_seconds_ceil(time: SystemTime) -> u64 {
     };
 
     duration.as_secs() + u64::from(duration.subsec_nanos() > 0)
+}
+
+fn format_stats(stats: StoreStats) -> Vec<u8> {
+    let max_memory = stats
+        .max_memory_bytes
+        .map_or_else(|| "none".to_string(), |bytes| bytes.to_string());
+
+    format!(
+        "# Keyspace\r\n\
+total_keys:{}\r\n\
+string_keys:{}\r\n\
+list_keys:{}\r\n\
+expiring_keys:{}\r\n\
+list_items:{}\r\n\
+\r\n\
+# Memory\r\n\
+key_bytes:{}\r\n\
+payload_bytes:{}\r\n\
+estimated_memory_bytes:{}\r\n\
+max_memory_bytes:{}\r\n\
+eviction_policy:{}\r\n\
+\r\n\
+# Counters\r\n\
+expired_keys_cleaned:{}\r\n\
+evicted_keys:{}\r\n\
+rejected_writes:{}\r\n",
+        stats.total_keys,
+        stats.string_keys,
+        stats.list_keys,
+        stats.expiring_keys,
+        stats.list_items,
+        stats.key_bytes,
+        stats.payload_bytes,
+        stats.estimated_memory_bytes,
+        max_memory,
+        stats.eviction_policy.as_str(),
+        stats.expired_keys_cleaned,
+        stats.evicted_keys,
+        stats.rejected_writes,
+    )
+    .into_bytes()
 }
 
 #[cfg(test)]
@@ -532,6 +596,48 @@ mod tests {
                 Frame::Bulk(b"one".to_vec()),
                 Frame::Bulk(b"two".to_vec())
             ])
+        );
+    }
+
+    #[tokio::test]
+    async fn info_command_reports_stats() {
+        let store = Arc::new(MemoryStore::new());
+
+        Command::Set {
+            key: "project".to_string(),
+            value: b"aerugo-cache".to_vec(),
+        }
+        .execute(Arc::clone(&store))
+        .await
+        .unwrap();
+
+        let response = Command::Info.execute(store).await.unwrap();
+
+        match response {
+            Frame::Bulk(value) => {
+                let text = String::from_utf8(value).unwrap();
+                assert!(text.contains("total_keys:1"));
+                assert!(text.contains("eviction_policy:noeviction"));
+            }
+            other => panic!("expected bulk stats response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dbsize_reports_total_keys() {
+        let store = Arc::new(MemoryStore::new());
+
+        Command::Set {
+            key: "project".to_string(),
+            value: b"aerugo-cache".to_vec(),
+        }
+        .execute(Arc::clone(&store))
+        .await
+        .unwrap();
+
+        assert_eq!(
+            Command::DbSize.execute(store).await.unwrap(),
+            Frame::Integer(1)
         );
     }
 }

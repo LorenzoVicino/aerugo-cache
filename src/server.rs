@@ -11,17 +11,18 @@ use crate::{
     command::Command,
     persistence::Aof,
     protocol::{read_frame, write_frame, Frame},
-    storage::MemoryStore,
+    storage::{MemoryStore, StoreConfig},
 };
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub addr: SocketAddr,
     pub append_only: Option<PathBuf>,
+    pub store_config: StoreConfig,
 }
 
 pub async fn run(config: ServerConfig) -> std::io::Result<()> {
-    let store = Arc::new(MemoryStore::new());
+    let store = Arc::new(MemoryStore::with_config(config.store_config));
     let aof = match &config.append_only {
         Some(path) => {
             let replayed = Aof::replay(path, Arc::clone(&store)).await?;

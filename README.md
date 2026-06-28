@@ -29,6 +29,9 @@ Supported today:
 | `LPOP` | `LPOP events` | Pops a value from the head of a list |
 | `RPOP` | `RPOP events` | Pops a value from the tail of a list |
 | `LRANGE` | `LRANGE events 0 -1` | Returns an inclusive list range |
+| `DBSIZE` | `DBSIZE` | Returns the current number of keys |
+| `INFO` | `INFO` | Returns Aerugo Cache stats as a bulk string |
+| `AERUGO.STATS` | `AERUGO.STATS` | Alias for the stats payload used by tooling |
 
 Planned next:
 
@@ -49,6 +52,12 @@ Run with append-only persistence:
 cargo run -- --append-only data/aerugo-cache.aof
 ```
 
+Run with a memory limit:
+
+```bash
+cargo run -- --max-memory 64mb --eviction-policy allkeys-random
+```
+
 Use it with `redis-cli`:
 
 ```bash
@@ -59,6 +68,7 @@ redis-cli -p 6379 EXPIRE language 60
 redis-cli -p 6379 TTL language
 redis-cli -p 6379 RPUSH events one two three
 redis-cli -p 6379 LRANGE events 0 -1
+redis-cli -p 6379 INFO
 redis-cli -p 6379 DEL language
 ```
 
@@ -88,6 +98,7 @@ beyond syntax and build something systems-oriented:
 - expiration metadata with `SystemTime`
 - append-only persistence and replay
 - typed values with strings and lists
+- memory accounting, memory limits, and simple eviction
 - command dispatch through enums and pattern matching
 - explicit error handling with `Result`
 - testable module boundaries
@@ -132,6 +143,12 @@ cargo clippy --all-targets --all-features
 cargo test
 ```
 
+Run benchmarks:
+
+```bash
+cargo bench
+```
+
 Run with debug logs:
 
 ```bash
@@ -171,6 +188,7 @@ RUST_LOG=aerugo_cache=debug cargo run
 - benchmark suite
 - memory limits
 - simple eviction policy
+- `DBSIZE`, `INFO`, `AERUGO.STATS`
 
 ## Contributing
 

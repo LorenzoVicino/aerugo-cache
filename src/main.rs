@@ -4,6 +4,7 @@ use std::{
 };
 
 use aerugo_cache::server::{run, ServerConfig};
+use aerugo_cache::storage::{EvictionPolicy, StoreConfig};
 use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -19,6 +20,12 @@ struct Args {
 
     #[arg(long, value_name = "PATH")]
     append_only: Option<PathBuf>,
+
+    #[arg(long, value_name = "BYTES", value_parser = parse_byte_size)]
+    max_memory: Option<usize>,
+
+    #[arg(long, default_value_t = EvictionPolicy::NoEviction)]
+    eviction_policy: EvictionPolicy,
 }
 
 #[tokio::main]
@@ -34,6 +41,41 @@ async fn main() -> std::io::Result<()> {
     run(ServerConfig {
         addr,
         append_only: args.append_only,
+        store_config: StoreConfig {
+            max_memory_bytes: args.max_memory,
+            eviction_policy: args.eviction_policy,
+        },
     })
     .await
+}
+
+fn parse_byte_size(value: &str) -> Result<usize, String> {
+    let value = value.trim();
+    let split_at = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split_at);
+
+    if number.is_empty() {
+        return Err("memory size must start with a number".to_string());
+    }
+
+    let number = number
+        .parse::<usize>()
+        .map_err(|_| "memory size is too large".to_string())?;
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "k" | "kb" | "kib" => 1024,
+        "m" | "mb" | "mib" => 1024 * 1024,
+        "g" | "gb" | "gib" => 1024 * 1024 * 1024,
+        other => {
+            return Err(format!(
+                "unsupported memory unit '{other}', expected b, kb, mb, or gb"
+            ))
+        }
+    };
+
+    number
+        .checked_mul(multiplier)
+        .ok_or_else(|| "memory size is too large".to_string())
 }
