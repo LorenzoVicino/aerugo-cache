@@ -14,6 +14,8 @@ pub enum CommandError {
     ExpectedBulk,
     #[error("invalid UTF-8 in command or key")]
     InvalidUtf8,
+    #[error("value is not an integer or is out of range")]
+    InvalidInteger,
     #[error("wrong number of arguments for '{0}'")]
     WrongArity(&'static str),
     #[error("unknown command '{0}'")]
@@ -28,6 +30,9 @@ pub enum Command {
     Get { key: String },
     Del { keys: Vec<String> },
     Exists { keys: Vec<String> },
+    Expire { key: String, seconds: u64 },
+    Ttl { key: String },
+    Persist { key: String },
 }
 
 impl Command {
@@ -83,6 +88,25 @@ impl Command {
                     keys: into_keys(args)?,
                 })
             }
+            "EXPIRE" => match args.len() {
+                2 => Ok(Self::Expire {
+                    key: bytes_to_string(args.remove(0))?,
+                    seconds: parse_u64(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("EXPIRE")),
+            },
+            "TTL" => match args.len() {
+                1 => Ok(Self::Ttl {
+                    key: bytes_to_string(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("TTL")),
+            },
+            "PERSIST" => match args.len() {
+                1 => Ok(Self::Persist {
+                    key: bytes_to_string(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("PERSIST")),
+            },
             other => Err(CommandError::Unknown(other.to_string())),
         }
     }
@@ -102,6 +126,13 @@ impl Command {
             },
             Self::Del { keys } => Frame::Integer(store.del(&keys).await as i64),
             Self::Exists { keys } => Frame::Integer(store.exists(&keys).await as i64),
+            Self::Expire { key, seconds } => {
+                Frame::Integer(if store.expire(&key, seconds).await { 1 } else { 0 })
+            }
+            Self::Ttl { key } => Frame::Integer(store.ttl(&key).await.as_redis_integer()),
+            Self::Persist { key } => {
+                Frame::Integer(if store.persist(&key).await { 1 } else { 0 })
+            }
         }
     }
 }
@@ -122,6 +153,12 @@ fn into_keys(args: Vec<Vec<u8>>) -> Result<Vec<String>, CommandError> {
 
 fn bytes_to_string(bytes: Vec<u8>) -> Result<String, CommandError> {
     String::from_utf8(bytes).map_err(|_| CommandError::InvalidUtf8)
+}
+
+fn parse_u64(bytes: Vec<u8>) -> Result<u64, CommandError> {
+    bytes_to_string(bytes)?
+        .parse()
+        .map_err(|_| CommandError::InvalidInteger)
 }
 
 #[cfg(test)]
@@ -155,5 +192,35 @@ mod tests {
 
         assert!(matches!(error, CommandError::Unknown(command) if command == "NOPE"));
     }
-}
 
+    #[test]
+    fn parses_expire_command() {
+        let frame = Frame::Array(vec![
+            Frame::Bulk(b"EXPIRE".to_vec()),
+            Frame::Bulk(b"project".to_vec()),
+            Frame::Bulk(b"30".to_vec()),
+        ]);
+
+        let command = Command::from_frame(frame).unwrap();
+
+        assert_eq!(
+            command,
+            Command::Expire {
+                key: "project".to_string(),
+                seconds: 30
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn ttl_command_reports_missing_key() {
+        let store = Arc::new(MemoryStore::new());
+        let response = Command::Ttl {
+            key: "missing".to_string(),
+        }
+        .execute(store)
+        .await;
+
+        assert_eq!(response, Frame::Integer(-2));
+    }
+}

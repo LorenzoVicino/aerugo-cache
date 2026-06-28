@@ -8,7 +8,7 @@ learn Rust properly.
 
 ## Status
 
-Ferrocache is at the first MVP stage.
+Ferrocache is at the early MVP stage and already supports basic expiration.
 
 Supported today:
 
@@ -20,10 +20,12 @@ Supported today:
 | `GET` | `GET name` | Returns a value or null |
 | `DEL` | `DEL name other` | Returns deleted key count |
 | `EXISTS` | `EXISTS name other` | Returns existing key count |
+| `EXPIRE` | `EXPIRE name 30` | Sets a TTL in seconds |
+| `TTL` | `TTL name` | Returns remaining TTL, `-1`, or `-2` |
+| `PERSIST` | `PERSIST name` | Removes a key expiration |
 
 Planned next:
 
-- key expiration with `EXPIRE` and `TTL`
 - append-only persistence
 - lists with `LPUSH`, `RPUSH`, `LPOP`, and `LRANGE`
 - basic benchmarks
@@ -43,6 +45,8 @@ Use it with `redis-cli`:
 redis-cli -p 6379 PING
 redis-cli -p 6379 SET language rust
 redis-cli -p 6379 GET language
+redis-cli -p 6379 EXPIRE language 60
+redis-cli -p 6379 TTL language
 redis-cli -p 6379 DEL language
 ```
 
@@ -54,6 +58,10 @@ redis-cli -p 6379
 OK
 127.0.0.1:6379> GET project
 "ferrocache"
+127.0.0.1:6379> EXPIRE project 30
+(integer) 1
+127.0.0.1:6379> TTL project
+(integer) 29
 ```
 
 ## Why Build This?
@@ -65,6 +73,7 @@ beyond syntax and build something systems-oriented:
 - protocol parsing and encoding
 - binary-safe values
 - shared state with `Arc` and `RwLock`
+- expiration metadata with `Instant`
 - command dispatch through enums and pattern matching
 - explicit error handling with `Result`
 - testable module boundaries
@@ -161,4 +170,3 @@ Small, focused pull requests are welcome. Good first areas:
 ## License
 
 MIT
-

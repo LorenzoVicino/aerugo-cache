@@ -1,8 +1,9 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
     io::BufReader,
     net::{TcpListener, TcpStream},
+    time,
 };
 use tracing::{debug, error, info};
 
@@ -20,6 +21,8 @@ pub struct ServerConfig {
 pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.addr).await?;
     let store = Arc::new(MemoryStore::new());
+
+    spawn_expiration_cleanup(Arc::clone(&store));
 
     info!(addr = %config.addr, "ferrocache listening");
 
@@ -54,3 +57,17 @@ async fn handle_connection(stream: TcpStream, store: Arc<MemoryStore>) -> std::i
     Ok(())
 }
 
+fn spawn_expiration_cleanup(store: Arc<MemoryStore>) {
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(10));
+
+        loop {
+            interval.tick().await;
+            let removed = store.cleanup_expired().await;
+
+            if removed > 0 {
+                debug!(removed, "cleaned expired keys");
+            }
+        }
+    });
+}
