@@ -63,8 +63,12 @@ impl Aof {
         while let Some(frame) = read_frame(&mut reader).await? {
             match Command::from_frame(frame) {
                 Ok(command) => {
-                    command.execute(Arc::clone(&store)).await;
-                    count += 1;
+                    match command.execute(Arc::clone(&store)).await {
+                        Ok(_) => count += 1,
+                        Err(error) => {
+                            warn!(%error, "skipping failed command during AOF replay");
+                        }
+                    }
                 }
                 Err(error) => {
                     warn!(%error, "skipping invalid command during AOF replay");
@@ -105,11 +109,26 @@ mod tests {
         ]))
         .await
         .unwrap();
+        aof.append(&Frame::Array(vec![
+            Frame::Bulk(b"RPUSH".to_vec()),
+            Frame::Bulk(b"events".to_vec()),
+            Frame::Bulk(b"one".to_vec()),
+            Frame::Bulk(b"two".to_vec()),
+        ]))
+        .await
+        .unwrap();
 
         let replayed = Aof::replay(&path, Arc::clone(&store)).await.unwrap();
 
-        assert_eq!(replayed, 1);
-        assert_eq!(store.get("project").await, Some(b"aerugo-cache".to_vec()));
+        assert_eq!(replayed, 2);
+        assert_eq!(
+            store.get("project").await.unwrap(),
+            Some(b"aerugo-cache".to_vec())
+        );
+        assert_eq!(
+            store.lrange("events", 0, -1).await.unwrap(),
+            vec![b"one".to_vec(), b"two".to_vec()]
+        );
 
         fs::remove_file(path).await.unwrap();
     }

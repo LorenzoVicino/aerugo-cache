@@ -24,10 +24,14 @@ Supported today:
 | `EXPIREAT` | `EXPIREAT name 1780000000` | Sets an absolute Unix timestamp expiration |
 | `TTL` | `TTL name` | Returns remaining TTL, `-1`, or `-2` |
 | `PERSIST` | `PERSIST name` | Removes a key expiration |
+| `LPUSH` | `LPUSH events one two` | Pushes one or more values to the head of a list |
+| `RPUSH` | `RPUSH events three` | Pushes one or more values to the tail of a list |
+| `LPOP` | `LPOP events` | Pops a value from the head of a list |
+| `RPOP` | `RPOP events` | Pops a value from the tail of a list |
+| `LRANGE` | `LRANGE events 0 -1` | Returns an inclusive list range |
 
 Planned next:
 
-- lists with `LPUSH`, `RPUSH`, `LPOP`, and `LRANGE`
 - basic benchmarks
 - pub/sub as a stretch goal
 
@@ -53,6 +57,8 @@ redis-cli -p 6379 SET language rust
 redis-cli -p 6379 GET language
 redis-cli -p 6379 EXPIRE language 60
 redis-cli -p 6379 TTL language
+redis-cli -p 6379 RPUSH events one two three
+redis-cli -p 6379 LRANGE events 0 -1
 redis-cli -p 6379 DEL language
 ```
 
@@ -81,6 +87,7 @@ beyond syntax and build something systems-oriented:
 - shared state with `Arc` and `RwLock`
 - expiration metadata with `SystemTime`
 - append-only persistence and replay
+- typed values with strings and lists
 - command dispatch through enums and pattern matching
 - explicit error handling with `Result`
 - testable module boundaries
@@ -157,6 +164,7 @@ RUST_LOG=aerugo_cache=debug cargo run
 
 - list values
 - `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`
+- `WRONGTYPE` errors for invalid type operations
 
 ### 0.5
 

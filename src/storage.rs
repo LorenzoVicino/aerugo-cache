@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -8,6 +8,11 @@ use tokio::sync::RwLock;
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: RwLock<HashMap<String, Entry>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreError {
+    WrongType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +34,14 @@ impl Ttl {
 
 #[derive(Debug, Clone)]
 struct Entry {
-    value: Vec<u8>,
+    value: Value,
     expires_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Value {
+    String(Vec<u8>),
+    List(VecDeque<Vec<u8>>),
 }
 
 impl MemoryStore {
@@ -42,18 +53,25 @@ impl MemoryStore {
         self.entries.write().await.insert(
             key,
             Entry {
-                value,
+                value: Value::String(value),
                 expires_at: None,
             },
         );
     }
 
-    pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
+    pub async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let now = SystemTime::now();
         let mut entries = self.entries.write().await;
         remove_if_expired(&mut entries, key, now);
 
-        entries.get(key).map(|entry| entry.value.clone())
+        let Some(entry) = entries.get(key) else {
+            return Ok(None);
+        };
+
+        match &entry.value {
+            Value::String(value) => Ok(Some(value.clone())),
+            Value::List(_) => Err(StoreError::WrongType),
+        }
     }
 
     pub async fn del(&self, keys: &[String]) -> usize {
@@ -159,6 +177,118 @@ impl MemoryStore {
 
         before - entries.len()
     }
+
+    pub async fn lpush(&self, key: String, values: Vec<Vec<u8>>) -> Result<usize, StoreError> {
+        let now = SystemTime::now();
+        let mut entries = self.entries.write().await;
+        remove_if_expired(&mut entries, &key, now);
+
+        let entry = entries.entry(key).or_insert_with(|| Entry {
+            value: Value::List(VecDeque::new()),
+            expires_at: None,
+        });
+
+        let Value::List(list) = &mut entry.value else {
+            return Err(StoreError::WrongType);
+        };
+
+        for value in values {
+            list.push_front(value);
+        }
+
+        Ok(list.len())
+    }
+
+    pub async fn rpush(&self, key: String, values: Vec<Vec<u8>>) -> Result<usize, StoreError> {
+        let now = SystemTime::now();
+        let mut entries = self.entries.write().await;
+        remove_if_expired(&mut entries, &key, now);
+
+        let entry = entries.entry(key).or_insert_with(|| Entry {
+            value: Value::List(VecDeque::new()),
+            expires_at: None,
+        });
+
+        let Value::List(list) = &mut entry.value else {
+            return Err(StoreError::WrongType);
+        };
+
+        for value in values {
+            list.push_back(value);
+        }
+
+        Ok(list.len())
+    }
+
+    pub async fn lpop(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.pop(key, PopSide::Left).await
+    }
+
+    pub async fn rpop(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.pop(key, PopSide::Right).await
+    }
+
+    pub async fn lrange(
+        &self,
+        key: &str,
+        start: i64,
+        stop: i64,
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        let now = SystemTime::now();
+        let mut entries = self.entries.write().await;
+        remove_if_expired(&mut entries, key, now);
+
+        let Some(entry) = entries.get(key) else {
+            return Ok(Vec::new());
+        };
+
+        let Value::List(list) = &entry.value else {
+            return Err(StoreError::WrongType);
+        };
+
+        let Some((start, stop)) = normalize_range(list.len(), start, stop) else {
+            return Ok(Vec::new());
+        };
+
+        Ok(list
+            .iter()
+            .skip(start)
+            .take(stop - start + 1)
+            .cloned()
+            .collect())
+    }
+
+    async fn pop(&self, key: &str, side: PopSide) -> Result<Option<Vec<u8>>, StoreError> {
+        let now = SystemTime::now();
+        let mut entries = self.entries.write().await;
+        remove_if_expired(&mut entries, key, now);
+
+        let Some(entry) = entries.get_mut(key) else {
+            return Ok(None);
+        };
+
+        let Value::List(list) = &mut entry.value else {
+            return Err(StoreError::WrongType);
+        };
+
+        let value = match side {
+            PopSide::Left => list.pop_front(),
+            PopSide::Right => list.pop_back(),
+        };
+        let is_empty = list.is_empty();
+
+        if is_empty {
+            entries.remove(key);
+        }
+
+        Ok(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PopSide {
+    Left,
+    Right,
 }
 
 fn remove_if_expired(entries: &mut HashMap<String, Entry>, key: &str, now: SystemTime) {
@@ -173,6 +303,30 @@ impl Entry {
     }
 }
 
+fn normalize_range(len: usize, start: i64, stop: i64) -> Option<(usize, usize)> {
+    if len == 0 {
+        return None;
+    }
+
+    let len = len as i64;
+    let mut start = if start < 0 { len + start } else { start };
+    let mut stop = if stop < 0 { len + stop } else { stop };
+
+    if start < 0 {
+        start = 0;
+    }
+
+    if stop < 0 || start >= len {
+        return None;
+    }
+
+    if stop >= len {
+        stop = len - 1;
+    }
+
+    (start <= stop).then_some((start as usize, stop as usize))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +339,10 @@ mod tests {
             .set("project".to_string(), b"aerugo-cache".to_vec())
             .await;
 
-        assert_eq!(store.get("project").await, Some(b"aerugo-cache".to_vec()));
+        assert_eq!(
+            store.get("project").await.unwrap(),
+            Some(b"aerugo-cache".to_vec())
+        );
         assert_eq!(store.exists(&["project".to_string()]).await, 1);
     }
 
@@ -198,7 +355,7 @@ mod tests {
             .await;
 
         assert!(store.expire("project", 0).await);
-        assert_eq!(store.get("project").await, None);
+        assert_eq!(store.get("project").await.unwrap(), None);
         assert_eq!(store.ttl("project").await, Ttl::Missing);
     }
 
@@ -211,7 +368,7 @@ mod tests {
             .await;
 
         assert!(store.expire_at_unix("project", 0).await);
-        assert_eq!(store.get("project").await, None);
+        assert_eq!(store.get("project").await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -237,5 +394,59 @@ mod tests {
         assert!(store.expire("project", 60).await);
         assert!(store.persist("project").await);
         assert_eq!(store.ttl("project").await, Ttl::NoExpiration);
+    }
+
+    #[tokio::test]
+    async fn list_push_pop_and_range_work() {
+        let store = MemoryStore::new();
+
+        assert_eq!(
+            store
+                .rpush(
+                    "events".to_string(),
+                    vec![b"one".to_vec(), b"two".to_vec()]
+                )
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            store.lpush("events".to_string(), vec![b"zero".to_vec()])
+                .await
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            store.lrange("events", 0, -1).await.unwrap(),
+            vec![b"zero".to_vec(), b"one".to_vec(), b"two".to_vec()]
+        );
+        assert_eq!(store.lpop("events").await.unwrap(), Some(b"zero".to_vec()));
+        assert_eq!(store.rpop("events").await.unwrap(), Some(b"two".to_vec()));
+        assert_eq!(
+            store.lrange("events", 0, -1).await.unwrap(),
+            vec![b"one".to_vec()]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_commands_reject_string_values() {
+        let store = MemoryStore::new();
+
+        store.set("project".to_string(), b"aerugo-cache".to_vec()).await;
+
+        assert_eq!(
+            store.lpush("project".to_string(), vec![b"event".to_vec()])
+                .await
+                .unwrap_err(),
+            StoreError::WrongType
+        );
+    }
+
+    #[test]
+    fn normalizes_redis_ranges() {
+        assert_eq!(normalize_range(3, 0, -1), Some((0, 2)));
+        assert_eq!(normalize_range(3, -2, -1), Some((1, 2)));
+        assert_eq!(normalize_range(3, 5, 9), None);
+        assert_eq!(normalize_range(3, 2, 1), None);
     }
 }

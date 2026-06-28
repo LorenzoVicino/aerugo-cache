@@ -62,16 +62,26 @@ async fn handle_connection(
 
     while let Some(frame) = read_frame(&mut reader).await? {
         let response = match Command::from_frame(frame) {
-            Ok(command) => match append_command(&aof, &command).await {
-                Ok(()) => command.execute(Arc::clone(&store)).await,
-                Err(error) => {
-                    error!(%error, "failed to append command to AOF");
-                    Frame::Error("ERR failed to persist command".to_string())
+            Ok(command) => {
+                let aof_frame = command.to_aof_frame();
+
+                match command.execute(Arc::clone(&store)).await {
+                    Ok(response) => match append_command(&aof, aof_frame.as_ref()).await {
+                        Ok(()) => response,
+                        Err(error) => {
+                            error!(%error, "failed to append command to AOF");
+                            Frame::Error("ERR failed to persist command".to_string())
+                        }
+                    },
+                    Err(error) => {
+                        error!(%error, "command failed");
+                        Command::error_frame(&error)
+                    }
                 }
-            },
+            }
             Err(error) => {
                 error!(%error, "command failed");
-                Frame::Error(format!("ERR {error}"))
+                Command::error_frame(&error)
             }
         };
 
@@ -81,16 +91,16 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn append_command(aof: &Option<Arc<Aof>>, command: &Command) -> std::io::Result<()> {
+async fn append_command(aof: &Option<Arc<Aof>>, frame: Option<&Frame>) -> std::io::Result<()> {
     let Some(aof) = aof else {
         return Ok(());
     };
 
-    let Some(frame) = command.to_aof_frame() else {
+    let Some(frame) = frame else {
         return Ok(());
     };
 
-    aof.append(&frame).await
+    aof.append(frame).await
 }
 
 fn spawn_expiration_cleanup(store: Arc<MemoryStore>) {

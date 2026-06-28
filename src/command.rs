@@ -5,7 +5,10 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{protocol::Frame, storage::MemoryStore};
+use crate::{
+    protocol::Frame,
+    storage::{MemoryStore, StoreError},
+};
 
 #[derive(Debug, Error)]
 pub enum CommandError {
@@ -23,6 +26,8 @@ pub enum CommandError {
     WrongArity(&'static str),
     #[error("unknown command '{0}'")]
     Unknown(String),
+    #[error("WRONGTYPE Operation against a key holding the wrong kind of value")]
+    WrongType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +42,11 @@ pub enum Command {
     ExpireAt { key: String, unix_seconds: u64 },
     Ttl { key: String },
     Persist { key: String },
+    Lpush { key: String, values: Vec<Vec<u8>> },
+    Rpush { key: String, values: Vec<Vec<u8>> },
+    Lpop { key: String },
+    Rpop { key: String },
+    Lrange { key: String, start: i64, stop: i64 },
 }
 
 impl Command {
@@ -118,39 +128,95 @@ impl Command {
                 }),
                 _ => Err(CommandError::WrongArity("PERSIST")),
             },
+            "LPUSH" => parse_push_command("LPUSH", args, |key, values| Self::Lpush { key, values }),
+            "RPUSH" => parse_push_command("RPUSH", args, |key, values| Self::Rpush { key, values }),
+            "LPOP" => match args.len() {
+                1 => Ok(Self::Lpop {
+                    key: bytes_to_string(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("LPOP")),
+            },
+            "RPOP" => match args.len() {
+                1 => Ok(Self::Rpop {
+                    key: bytes_to_string(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("RPOP")),
+            },
+            "LRANGE" => match args.len() {
+                3 => Ok(Self::Lrange {
+                    key: bytes_to_string(args.remove(0))?,
+                    start: parse_i64(args.remove(0))?,
+                    stop: parse_i64(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("LRANGE")),
+            },
             other => Err(CommandError::Unknown(other.to_string())),
         }
     }
 
-    pub async fn execute(self, store: Arc<MemoryStore>) -> Frame {
+    pub async fn execute(self, store: Arc<MemoryStore>) -> Result<Frame, CommandError> {
         match self {
-            Self::Ping(None) => Frame::Simple("PONG".to_string()),
-            Self::Ping(Some(value)) => Frame::Bulk(value),
-            Self::Echo(value) => Frame::Bulk(value),
+            Self::Ping(None) => Ok(Frame::Simple("PONG".to_string())),
+            Self::Ping(Some(value)) => Ok(Frame::Bulk(value)),
+            Self::Echo(value) => Ok(Frame::Bulk(value)),
             Self::Set { key, value } => {
                 store.set(key, value).await;
-                Frame::Simple("OK".to_string())
+                Ok(Frame::Simple("OK".to_string()))
             }
-            Self::Get { key } => match store.get(&key).await {
+            Self::Get { key } => Ok(match store.get(&key).await? {
                 Some(value) => Frame::Bulk(value),
                 None => Frame::Null,
-            },
-            Self::Del { keys } => Frame::Integer(store.del(&keys).await as i64),
-            Self::Exists { keys } => Frame::Integer(store.exists(&keys).await as i64),
-            Self::Expire { key, seconds } => Frame::Integer(if store.expire(&key, seconds).await {
+            }),
+            Self::Del { keys } => Ok(Frame::Integer(store.del(&keys).await as i64)),
+            Self::Exists { keys } => Ok(Frame::Integer(store.exists(&keys).await as i64)),
+            Self::Expire { key, seconds } => Ok(Frame::Integer(if store.expire(&key, seconds).await {
                 1
             } else {
                 0
-            }),
-            Self::ExpireAt { key, unix_seconds } => {
-                Frame::Integer(if store.expire_at_unix(&key, unix_seconds).await {
-                    1
-                } else {
-                    0
-                })
+            })),
+            Self::ExpireAt { key, unix_seconds } => Ok(Frame::Integer(if store
+                .expire_at_unix(&key, unix_seconds)
+                .await
+            {
+                1
+            } else {
+                0
+            })),
+            Self::Ttl { key } => Ok(Frame::Integer(store.ttl(&key).await.as_redis_integer())),
+            Self::Persist { key } => Ok(Frame::Integer(if store.persist(&key).await {
+                1
+            } else {
+                0
+            })),
+            Self::Lpush { key, values } => {
+                Ok(Frame::Integer(store.lpush(key, values).await? as i64))
             }
-            Self::Ttl { key } => Frame::Integer(store.ttl(&key).await.as_redis_integer()),
-            Self::Persist { key } => Frame::Integer(if store.persist(&key).await { 1 } else { 0 }),
+            Self::Rpush { key, values } => {
+                Ok(Frame::Integer(store.rpush(key, values).await? as i64))
+            }
+            Self::Lpop { key } => Ok(match store.lpop(&key).await? {
+                Some(value) => Frame::Bulk(value),
+                None => Frame::Null,
+            }),
+            Self::Rpop { key } => Ok(match store.rpop(&key).await? {
+                Some(value) => Frame::Bulk(value),
+                None => Frame::Null,
+            }),
+            Self::Lrange { key, start, stop } => Ok(Frame::Array(
+                store
+                    .lrange(&key, start, stop)
+                    .await?
+                    .into_iter()
+                    .map(Frame::Bulk)
+                    .collect(),
+            )),
+        }
+    }
+
+    pub fn error_frame(error: &CommandError) -> Frame {
+        match error {
+            CommandError::WrongType => Frame::Error(error.to_string()),
+            _ => Frame::Error(format!("ERR {error}")),
         }
     }
 
@@ -180,13 +246,53 @@ impl Command {
                 bulk("PERSIST"),
                 Frame::Bulk(key.as_bytes().to_vec()),
             ])),
+            Self::Lpush { key, values } => Some(list_aof_frame("LPUSH", key, values)),
+            Self::Rpush { key, values } => Some(list_aof_frame("RPUSH", key, values)),
+            Self::Lpop { key } => Some(Frame::Array(vec![
+                bulk("LPOP"),
+                Frame::Bulk(key.as_bytes().to_vec()),
+            ])),
+            Self::Rpop { key } => Some(Frame::Array(vec![
+                bulk("RPOP"),
+                Frame::Bulk(key.as_bytes().to_vec()),
+            ])),
             Self::Ping(_)
             | Self::Echo(_)
             | Self::Get { .. }
             | Self::Exists { .. }
-            | Self::Ttl { .. } => None,
+            | Self::Ttl { .. }
+            | Self::Lrange { .. } => None,
         }
     }
+}
+
+impl From<StoreError> for CommandError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::WrongType => Self::WrongType,
+        }
+    }
+}
+
+fn parse_push_command(
+    name: &'static str,
+    mut args: Vec<Vec<u8>>,
+    build: impl FnOnce(String, Vec<Vec<u8>>) -> Command,
+) -> Result<Command, CommandError> {
+    if args.len() < 2 {
+        return Err(CommandError::WrongArity(name));
+    }
+
+    Ok(build(bytes_to_string(args.remove(0))?, args))
+}
+
+fn list_aof_frame(command: &str, key: &str, values: &[Vec<u8>]) -> Frame {
+    Frame::Array(
+        std::iter::once(bulk(command))
+            .chain(std::iter::once(Frame::Bulk(key.as_bytes().to_vec())))
+            .chain(values.iter().cloned().map(Frame::Bulk))
+            .collect(),
+    )
 }
 
 fn into_bulk_args(items: Vec<Frame>) -> Result<Vec<Vec<u8>>, CommandError> {
@@ -208,6 +314,12 @@ fn bytes_to_string(bytes: Vec<u8>) -> Result<String, CommandError> {
 }
 
 fn parse_u64(bytes: Vec<u8>) -> Result<u64, CommandError> {
+    bytes_to_string(bytes)?
+        .parse()
+        .map_err(|_| CommandError::InvalidInteger)
+}
+
+fn parse_i64(bytes: Vec<u8>) -> Result<i64, CommandError> {
     bytes_to_string(bytes)?
         .parse()
         .map_err(|_| CommandError::InvalidInteger)
@@ -304,6 +416,47 @@ mod tests {
     }
 
     #[test]
+    fn parses_lpush_command() {
+        let frame = Frame::Array(vec![
+            Frame::Bulk(b"LPUSH".to_vec()),
+            Frame::Bulk(b"events".to_vec()),
+            Frame::Bulk(b"one".to_vec()),
+            Frame::Bulk(b"two".to_vec()),
+        ]);
+
+        let command = Command::from_frame(frame).unwrap();
+
+        assert_eq!(
+            command,
+            Command::Lpush {
+                key: "events".to_string(),
+                values: vec![b"one".to_vec(), b"two".to_vec()]
+            }
+        );
+    }
+
+    #[test]
+    fn parses_lrange_command() {
+        let frame = Frame::Array(vec![
+            Frame::Bulk(b"LRANGE".to_vec()),
+            Frame::Bulk(b"events".to_vec()),
+            Frame::Bulk(b"0".to_vec()),
+            Frame::Bulk(b"-1".to_vec()),
+        ]);
+
+        let command = Command::from_frame(frame).unwrap();
+
+        assert_eq!(
+            command,
+            Command::Lrange {
+                key: "events".to_string(),
+                start: 0,
+                stop: -1
+            }
+        );
+    }
+
+    #[test]
     fn serializes_set_to_aof_frame() {
         let command = Command::Set {
             key: "project".to_string(),
@@ -320,6 +473,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn serializes_lpush_to_aof_frame() {
+        let command = Command::Lpush {
+            key: "events".to_string(),
+            values: vec![b"one".to_vec(), b"two".to_vec()],
+        };
+
+        assert_eq!(
+            command.to_aof_frame(),
+            Some(Frame::Array(vec![
+                Frame::Bulk(b"LPUSH".to_vec()),
+                Frame::Bulk(b"events".to_vec()),
+                Frame::Bulk(b"one".to_vec()),
+                Frame::Bulk(b"two".to_vec()),
+            ]))
+        );
+    }
+
     #[tokio::test]
     async fn ttl_command_reports_missing_key() {
         let store = Arc::new(MemoryStore::new());
@@ -327,8 +498,39 @@ mod tests {
             key: "missing".to_string(),
         }
         .execute(store)
-        .await;
+        .await
+        .unwrap();
 
         assert_eq!(response, Frame::Integer(-2));
+    }
+
+    #[tokio::test]
+    async fn list_commands_execute() {
+        let store = Arc::new(MemoryStore::new());
+
+        assert_eq!(
+            Command::Rpush {
+                key: "events".to_string(),
+                values: vec![b"one".to_vec(), b"two".to_vec()]
+            }
+            .execute(Arc::clone(&store))
+            .await
+            .unwrap(),
+            Frame::Integer(2)
+        );
+        assert_eq!(
+            Command::Lrange {
+                key: "events".to_string(),
+                start: 0,
+                stop: -1,
+            }
+            .execute(store)
+            .await
+            .unwrap(),
+            Frame::Array(vec![
+                Frame::Bulk(b"one".to_vec()),
+                Frame::Bulk(b"two".to_vec())
+            ])
+        );
     }
 }
