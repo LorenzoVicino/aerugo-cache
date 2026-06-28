@@ -32,10 +32,11 @@ Supported today:
 | `DBSIZE` | `DBSIZE` | Returns the current number of keys |
 | `INFO` | `INFO` | Returns Aerugo Cache stats as a bulk string |
 | `AERUGO.STATS` | `AERUGO.STATS` | Alias for the stats payload used by tooling |
+| `AERUGO.INSPECT` | `AERUGO.INSPECT 128` | Returns key metadata for dashboards and diagnostics |
 
 Planned next:
 
-- basic benchmarks
+- dashboard polish
 - pub/sub as a stretch goal
 
 ## Quick Start
@@ -58,6 +59,18 @@ Run with a memory limit:
 cargo run -- --max-memory 64mb --eviction-policy allkeys-random
 ```
 
+Open the terminal dashboard for a running server:
+
+```bash
+cargo run -- tui --host 127.0.0.1 --port 6379
+```
+
+Limit displayed key rows and adjust refresh speed:
+
+```bash
+cargo run -- tui --limit 50 --refresh-ms 500
+```
+
 Use it with `redis-cli`:
 
 ```bash
@@ -69,6 +82,7 @@ redis-cli -p 6379 TTL language
 redis-cli -p 6379 RPUSH events one two three
 redis-cli -p 6379 LRANGE events 0 -1
 redis-cli -p 6379 INFO
+redis-cli -p 6379 AERUGO.INSPECT 10
 redis-cli -p 6379 DEL language
 ```
 
@@ -99,6 +113,7 @@ beyond syntax and build something systems-oriented:
 - append-only persistence and replay
 - typed values with strings and lists
 - memory accounting, memory limits, and simple eviction
+- terminal dashboards with `ratatui`
 - command dispatch through enums and pattern matching
 - explicit error handling with `Result`
 - testable module boundaries
@@ -109,9 +124,11 @@ beyond syntax and build something systems-oriented:
 src/
   main.rs             CLI, logging, process lifecycle
   lib.rs              public crate modules
+  client.rs           small RESP client used by local tooling
   server.rs           TCP listener and connection loop
   command.rs          Redis command parsing and execution
   storage.rs          in-memory key-value engine
+  tui.rs              terminal dashboard
   protocol/
     mod.rs
     frame.rs          RESP frame model
@@ -189,6 +206,13 @@ RUST_LOG=aerugo_cache=debug cargo run
 - memory limits
 - simple eviction policy
 - `DBSIZE`, `INFO`, `AERUGO.STATS`
+
+### 0.6
+
+- terminal dashboard with `ratatui`
+- `AERUGO.INSPECT` keyspace diagnostics
+- RESP client module for local tooling
+- memory and key inventory views
 
 ## Contributing
 

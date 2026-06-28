@@ -7,8 +7,10 @@ use thiserror::Error;
 
 use crate::{
     protocol::Frame,
-    storage::{MemoryStore, StoreError, StoreStats},
+    storage::{KeyInspection, MemoryStore, StoreError, StoreStats},
 };
+
+const DEFAULT_INSPECT_LIMIT: usize = 128;
 
 #[derive(Debug, Error)]
 pub enum CommandError {
@@ -52,6 +54,7 @@ pub enum Command {
     DbSize,
     Info,
     AerugoStats,
+    AerugoInspect { limit: usize },
 }
 
 impl Command {
@@ -167,6 +170,15 @@ impl Command {
                 0 => Ok(Self::AerugoStats),
                 _ => Err(CommandError::WrongArity("AERUGO.STATS")),
             },
+            "AERUGO.INSPECT" => match args.len() {
+                0 => Ok(Self::AerugoInspect {
+                    limit: DEFAULT_INSPECT_LIMIT,
+                }),
+                1 => Ok(Self::AerugoInspect {
+                    limit: parse_usize(args.remove(0))?,
+                }),
+                _ => Err(CommandError::WrongArity("AERUGO.INSPECT")),
+            },
             other => Err(CommandError::Unknown(other.to_string())),
         }
     }
@@ -230,6 +242,14 @@ impl Command {
             )),
             Self::DbSize => Ok(Frame::Integer(store.stats().await.total_keys as i64)),
             Self::Info | Self::AerugoStats => Ok(Frame::Bulk(format_stats(store.stats().await))),
+            Self::AerugoInspect { limit } => Ok(Frame::Array(
+                store
+                    .inspect_keys(limit)
+                    .await
+                    .into_iter()
+                    .map(inspection_to_frame)
+                    .collect(),
+            )),
         }
     }
 
@@ -284,7 +304,8 @@ impl Command {
             | Self::Lrange { .. }
             | Self::DbSize
             | Self::Info
-            | Self::AerugoStats => None,
+            | Self::AerugoStats
+            | Self::AerugoInspect { .. } => None,
         }
     }
 }
@@ -349,8 +370,18 @@ fn parse_i64(bytes: Vec<u8>) -> Result<i64, CommandError> {
         .map_err(|_| CommandError::InvalidInteger)
 }
 
+fn parse_usize(bytes: Vec<u8>) -> Result<usize, CommandError> {
+    bytes_to_string(bytes)?
+        .parse()
+        .map_err(|_| CommandError::InvalidInteger)
+}
+
 fn bulk(value: &str) -> Frame {
     Frame::Bulk(value.as_bytes().to_vec())
+}
+
+fn integer(value: usize) -> Frame {
+    Frame::Integer(value.min(i64::MAX as usize) as i64)
 }
 
 fn expiration_deadline(seconds: u64) -> u64 {
@@ -408,6 +439,17 @@ rejected_writes:{}\r\n",
         stats.rejected_writes,
     )
     .into_bytes()
+}
+
+fn inspection_to_frame(inspection: KeyInspection) -> Frame {
+    Frame::Array(vec![
+        Frame::Bulk(inspection.key.into_bytes()),
+        bulk(inspection.value_type),
+        Frame::Integer(inspection.ttl_seconds),
+        integer(inspection.payload_bytes),
+        integer(inspection.estimated_memory_bytes),
+        integer(inspection.list_items),
+    ])
 }
 
 #[cfg(test)]
@@ -519,6 +561,18 @@ mod tests {
                 stop: -1
             }
         );
+    }
+
+    #[test]
+    fn parses_aerugo_inspect_command() {
+        let frame = Frame::Array(vec![
+            Frame::Bulk(b"AERUGO.INSPECT".to_vec()),
+            Frame::Bulk(b"25".to_vec()),
+        ]);
+
+        let command = Command::from_frame(frame).unwrap();
+
+        assert_eq!(command, Command::AerugoInspect { limit: 25 });
     }
 
     #[test]
@@ -639,5 +693,34 @@ mod tests {
             Command::DbSize.execute(store).await.unwrap(),
             Frame::Integer(1)
         );
+    }
+
+    #[tokio::test]
+    async fn aerugo_inspect_reports_key_rows() {
+        let store = Arc::new(MemoryStore::new());
+
+        Command::Set {
+            key: "project".to_string(),
+            value: b"aerugo-cache".to_vec(),
+        }
+        .execute(Arc::clone(&store))
+        .await
+        .unwrap();
+
+        let response = Command::AerugoInspect { limit: 10 }
+            .execute(store)
+            .await
+            .unwrap();
+
+        match response {
+            Frame::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                let Frame::Array(columns) = &rows[0] else {
+                    panic!("expected key row array");
+                };
+                assert_eq!(columns.first(), Some(&Frame::Bulk(b"project".to_vec())));
+            }
+            other => panic!("expected array response, got {other:?}"),
+        }
     }
 }

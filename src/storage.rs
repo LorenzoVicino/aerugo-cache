@@ -108,6 +108,16 @@ pub struct StoreStats {
     pub rejected_writes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyInspection {
+    pub key: String,
+    pub value_type: &'static str,
+    pub ttl_seconds: i64,
+    pub payload_bytes: usize,
+    pub estimated_memory_bytes: usize,
+    pub list_items: usize,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct StoreCounters {
     expired_keys_cleaned: u64,
@@ -356,6 +366,38 @@ impl MemoryStore {
         stats
     }
 
+    pub async fn inspect_keys(&self, limit: usize) -> Vec<KeyInspection> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let now = SystemTime::now();
+        let mut entries = self.entries.write().await;
+        let before = entries.len();
+
+        entries.retain(|_, entry| !entry.is_expired(now));
+        let expired = before - entries.len();
+        let mut keys = entries
+            .iter()
+            .map(|(key, entry)| KeyInspection {
+                key: key.clone(),
+                value_type: entry.value.type_name(),
+                ttl_seconds: entry_ttl_seconds(entry, now),
+                payload_bytes: entry.value.payload_bytes(),
+                estimated_memory_bytes: entry_estimated_memory_bytes(key, entry),
+                list_items: entry.value.list_items(),
+            })
+            .collect::<Vec<_>>();
+
+        keys.sort_by(|left, right| left.key.cmp(&right.key));
+        keys.truncate(limit);
+
+        drop(entries);
+        self.record_expired(expired as u64).await;
+
+        keys
+    }
+
     async fn push(
         &self,
         key: String,
@@ -558,6 +600,13 @@ impl Entry {
 }
 
 impl Value {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Self::String(_) => "string",
+            Self::List(_) => "list",
+        }
+    }
+
     fn payload_bytes(&self) -> usize {
         match self {
             Self::String(value) => value.len(),
@@ -628,6 +677,15 @@ fn estimated_memory_bytes(entries: &HashMap<String, Entry>) -> usize {
 
 fn entry_estimated_memory_bytes(key: &str, entry: &Entry) -> usize {
     ENTRY_OVERHEAD_BYTES + key.len() + entry.value.estimated_memory_bytes()
+}
+
+fn entry_ttl_seconds(entry: &Entry, now: SystemTime) -> i64 {
+    match entry.expires_at {
+        Some(expires_at) => expires_at
+            .duration_since(now)
+            .map_or(0, |duration| duration.as_secs().min(i64::MAX as u64) as i64),
+        None => -1,
+    }
 }
 
 fn normalize_range(len: usize, start: i64, stop: i64) -> Option<(usize, usize)> {
@@ -798,6 +856,31 @@ mod tests {
         assert_eq!(stats.expiring_keys, 1);
         assert_eq!(stats.list_items, 2);
         assert!(stats.payload_bytes >= "aerugo-cache".len() + "one".len() + "two".len());
+    }
+
+    #[tokio::test]
+    async fn inspect_keys_reports_key_metadata() {
+        let store = MemoryStore::new();
+
+        store
+            .set("project".to_string(), b"aerugo-cache".to_vec())
+            .await
+            .unwrap();
+        store
+            .rpush("events".to_string(), vec![b"one".to_vec(), b"two".to_vec()])
+            .await
+            .unwrap();
+        assert!(store.expire("project", 60).await);
+
+        let keys = store.inspect_keys(10).await;
+
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].key, "events");
+        assert_eq!(keys[0].value_type, "list");
+        assert_eq!(keys[0].list_items, 2);
+        assert_eq!(keys[1].key, "project");
+        assert_eq!(keys[1].value_type, "string");
+        assert!(keys[1].ttl_seconds >= 0);
     }
 
     #[tokio::test]
