@@ -3,8 +3,8 @@ use std::{
     path::PathBuf,
 };
 
-use clap::Parser;
 use aerugo_cache::server::{run, ServerConfig};
+use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Debug, Parser)]
