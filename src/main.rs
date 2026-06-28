@@ -4,11 +4,11 @@ use std::{
 };
 
 use clap::Parser;
-use ferrocache::server::{run, ServerConfig};
+use aerugo_cache::server::{run, ServerConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Debug, Parser)]
-#[command(name = "ferrocache")]
+#[command(name = "aerugo-cache")]
 #[command(about = "A small Redis-compatible in-memory cache written in Rust.")]
 struct Args {
     #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]

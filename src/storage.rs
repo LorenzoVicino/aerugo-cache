@@ -182,10 +182,10 @@ mod tests {
         let store = MemoryStore::new();
 
         store
-            .set("project".to_string(), b"ferrocache".to_vec())
+            .set("project".to_string(), b"aerugo-cache".to_vec())
             .await;
 
-        assert_eq!(store.get("project").await, Some(b"ferrocache".to_vec()));
+        assert_eq!(store.get("project").await, Some(b"aerugo-cache".to_vec()));
         assert_eq!(store.exists(&["project".to_string()]).await, 1);
     }
 
@@ -194,7 +194,7 @@ mod tests {
         let store = MemoryStore::new();
 
         store
-            .set("project".to_string(), b"ferrocache".to_vec())
+            .set("project".to_string(), b"aerugo-cache".to_vec())
             .await;
 
         assert!(store.expire("project", 0).await);
@@ -207,7 +207,7 @@ mod tests {
         let store = MemoryStore::new();
 
         store
-            .set("project".to_string(), b"ferrocache".to_vec())
+            .set("project".to_string(), b"aerugo-cache".to_vec())
             .await;
 
         assert!(store.expire_at_unix("project", 0).await);
@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(store.ttl("missing").await, Ttl::Missing);
 
         store
-            .set("project".to_string(), b"ferrocache".to_vec())
+            .set("project".to_string(), b"aerugo-cache".to_vec())
             .await;
 
         assert_eq!(store.ttl("project").await, Ttl::NoExpiration);
@@ -232,7 +232,7 @@ mod tests {
         let store = MemoryStore::new();
 
         store
-            .set("project".to_string(), b"ferrocache".to_vec())
+            .set("project".to_string(), b"aerugo-cache".to_vec())
             .await;
         assert!(store.expire("project", 60).await);
         assert!(store.persist("project").await);

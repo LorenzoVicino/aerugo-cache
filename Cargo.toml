@@ -1,10 +1,11 @@
 [package]
-name = "ferrocache"
+name = "aerugo-cache"
 version = "0.1.0"
 edition = "2021"
-description = "A small Redis-compatible in-memory cache written in Rust."
+description = "A small Redis-compatible in-memory cache written in Rust for learning async systems programming."
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/LorenzoVicino/aerugo-cache"
 keywords = ["redis", "cache", "tokio", "database", "learning"]
 categories = ["command-line-utilities", "database-implementations"]
 

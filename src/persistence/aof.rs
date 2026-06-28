@@ -88,7 +88,7 @@ mod tests {
     #[tokio::test]
     async fn appends_and_replays_commands() {
         let path = std::env::temp_dir().join(format!(
-            "ferrocache-aof-{}-{}.aof",
+            "aerugo-cache-aof-{}-{}.aof",
             process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -101,7 +101,7 @@ mod tests {
         aof.append(&Frame::Array(vec![
             Frame::Bulk(b"SET".to_vec()),
             Frame::Bulk(b"project".to_vec()),
-            Frame::Bulk(b"ferrocache".to_vec()),
+            Frame::Bulk(b"aerugo-cache".to_vec()),
         ]))
         .await
         .unwrap();
@@ -109,7 +109,7 @@ mod tests {
         let replayed = Aof::replay(&path, Arc::clone(&store)).await.unwrap();
 
         assert_eq!(replayed, 1);
-        assert_eq!(store.get("project").await, Some(b"ferrocache".to_vec()));
+        assert_eq!(store.get("project").await, Some(b"aerugo-cache".to_vec()));
 
         fs::remove_file(path).await.unwrap();
     }

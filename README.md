@@ -1,6 +1,6 @@
-# Ferrocache
+# Aerugo Cache
 
-Ferrocache is a small Redis-compatible in-memory cache written in Rust.
+Aerugo Cache is a small Redis-compatible in-memory cache written in Rust.
 
 The goal is not to replace Redis. The goal is to build a real networked system
 that is small enough to understand, useful enough to run, and deep enough to
@@ -8,7 +8,7 @@ learn Rust properly.
 
 ## Status
 
-Ferrocache is at the early MVP stage and already supports basic expiration.
+Aerugo Cache is at the early MVP stage and already supports basic expiration.
 
 Supported today:
 
@@ -16,7 +16,7 @@ Supported today:
 | --- | --- | --- |
 | `PING` | `PING` | Returns `PONG` |
 | `ECHO` | `ECHO hello` | Returns the provided value |
-| `SET` | `SET name ferrocache` | Stores a binary-safe value |
+| `SET` | `SET name aerugo-cache` | Stores a binary-safe value |
 | `GET` | `GET name` | Returns a value or null |
 | `DEL` | `DEL name other` | Returns deleted key count |
 | `EXISTS` | `EXISTS name other` | Returns existing key count |
@@ -42,7 +42,7 @@ cargo run -- --host 127.0.0.1 --port 6379
 Run with append-only persistence:
 
 ```bash
-cargo run -- --append-only data/ferrocache.aof
+cargo run -- --append-only data/aerugo-cache.aof
 ```
 
 Use it with `redis-cli`:
@@ -60,10 +60,10 @@ Or open an interactive Redis CLI session:
 
 ```bash
 redis-cli -p 6379
-127.0.0.1:6379> SET project ferrocache
+127.0.0.1:6379> SET project aerugo-cache
 OK
 127.0.0.1:6379> GET project
-"ferrocache"
+"aerugo-cache"
 127.0.0.1:6379> EXPIRE project 30
 (integer) 1
 127.0.0.1:6379> TTL project
@@ -72,7 +72,7 @@ OK
 
 ## Why Build This?
 
-Ferrocache is designed as a learning project for Rust developers who want to go
+Aerugo Cache is designed as a learning project for Rust developers who want to go
 beyond syntax and build something systems-oriented:
 
 - TCP networking with Tokio
@@ -106,7 +106,7 @@ compatibility and keeps the implementation approachable.
 
 ## Usage Model
 
-Ferrocache can be used as:
+Aerugo Cache can be used as:
 
 - a local Redis-like cache for experiments
 - a teaching project for async Rust and protocol design
@@ -128,7 +128,7 @@ cargo test
 Run with debug logs:
 
 ```bash
-RUST_LOG=ferrocache=debug cargo run
+RUST_LOG=aerugo_cache=debug cargo run
 ```
 
 ## Roadmap

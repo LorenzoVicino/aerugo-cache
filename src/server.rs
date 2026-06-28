@@ -37,7 +37,7 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
 
     spawn_expiration_cleanup(Arc::clone(&store));
 
-    info!(addr = %config.addr, "ferrocache listening");
+    info!(addr = %config.addr, "aerugo cache listening");
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;

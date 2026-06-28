@@ -242,7 +242,7 @@ mod tests {
         let frame = Frame::Array(vec![
             Frame::Bulk(b"SET".to_vec()),
             Frame::Bulk(b"project".to_vec()),
-            Frame::Bulk(b"ferrocache".to_vec()),
+            Frame::Bulk(b"aerugo-cache".to_vec()),
         ]);
 
         let command = Command::from_frame(frame).unwrap();
@@ -251,7 +251,7 @@ mod tests {
             command,
             Command::Set {
                 key: "project".to_string(),
-                value: b"ferrocache".to_vec()
+                value: b"aerugo-cache".to_vec()
             }
         );
     }
@@ -307,7 +307,7 @@ mod tests {
     fn serializes_set_to_aof_frame() {
         let command = Command::Set {
             key: "project".to_string(),
-            value: b"ferrocache".to_vec(),
+            value: b"aerugo-cache".to_vec(),
         };
 
         assert_eq!(
@@ -315,7 +315,7 @@ mod tests {
             Some(Frame::Array(vec![
                 Frame::Bulk(b"SET".to_vec()),
                 Frame::Bulk(b"project".to_vec()),
-                Frame::Bulk(b"ferrocache".to_vec()),
+                Frame::Bulk(b"aerugo-cache".to_vec()),
             ]))
         );
     }
