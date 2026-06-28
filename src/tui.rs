@@ -148,10 +148,7 @@ async fn fetch_snapshot(config: DashboardConfig) -> Result<DashboardSnapshot, Da
     let mut client = RespClient::connect(config.addr).await?;
     let stats = client.command(&[String::from("AERUGO.STATS")]).await?;
     let keys = client
-        .command(&[
-            String::from("AERUGO.INSPECT"),
-            config.key_limit.to_string(),
-        ])
+        .command(&[String::from("AERUGO.INSPECT"), config.key_limit.to_string()])
         .await?;
 
     Ok(DashboardSnapshot {
@@ -191,7 +188,9 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &DashboardApp, config: 
         Span::raw("  "),
         Span::styled(
             config.addr.to_string(),
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!("  refresh: {age}")),
     ]);
@@ -269,12 +268,30 @@ fn render_memory(frame: &mut Frame<'_>, area: Rect, stats: &DashboardStats) {
 
 fn render_keyspace(frame: &mut Frame<'_>, area: Rect, stats: &DashboardStats) {
     let rows = [
-        Row::new(vec![Cell::from("total keys"), Cell::from(stats.total_keys.to_string())]),
-        Row::new(vec![Cell::from("strings"), Cell::from(stats.string_keys.to_string())]),
-        Row::new(vec![Cell::from("lists"), Cell::from(stats.list_keys.to_string())]),
-        Row::new(vec![Cell::from("expiring"), Cell::from(stats.expiring_keys.to_string())]),
-        Row::new(vec![Cell::from("list items"), Cell::from(stats.list_items.to_string())]),
-        Row::new(vec![Cell::from("eviction"), Cell::from(stats.eviction_policy.clone())]),
+        Row::new(vec![
+            Cell::from("total keys"),
+            Cell::from(stats.total_keys.to_string()),
+        ]),
+        Row::new(vec![
+            Cell::from("strings"),
+            Cell::from(stats.string_keys.to_string()),
+        ]),
+        Row::new(vec![
+            Cell::from("lists"),
+            Cell::from(stats.list_keys.to_string()),
+        ]),
+        Row::new(vec![
+            Cell::from("expiring"),
+            Cell::from(stats.expiring_keys.to_string()),
+        ]),
+        Row::new(vec![
+            Cell::from("list items"),
+            Cell::from(stats.list_items.to_string()),
+        ]),
+        Row::new(vec![
+            Cell::from("eviction"),
+            Cell::from(stats.eviction_policy.clone()),
+        ]),
     ];
 
     frame.render_widget(
@@ -286,7 +303,10 @@ fn render_keyspace(frame: &mut Frame<'_>, area: Rect, stats: &DashboardStats) {
 
 fn render_counters(frame: &mut Frame<'_>, area: Rect, stats: &DashboardStats) {
     let rows = [
-        Row::new(vec![Cell::from("key bytes"), Cell::from(format_bytes(stats.key_bytes))]),
+        Row::new(vec![
+            Cell::from("key bytes"),
+            Cell::from(format_bytes(stats.key_bytes)),
+        ]),
         Row::new(vec![
             Cell::from("payload bytes"),
             Cell::from(format_bytes(stats.payload_bytes)),
@@ -464,8 +484,7 @@ fn parse_key_row(frame: RespFrame) -> Result<KeyRow, DashboardError> {
     let columns: [RespFrame; 6] = columns.try_into().map_err(|columns: Vec<RespFrame>| {
         DashboardError::InvalidInspect(format!("expected 6 key columns, got {}", columns.len()))
     })?;
-    let [key, value_type, ttl_seconds, payload_bytes, estimated_memory_bytes, list_items] =
-        columns;
+    let [key, value_type, ttl_seconds, payload_bytes, estimated_memory_bytes, list_items] = columns;
 
     Ok(KeyRow {
         key: frame_to_string(key)?,
