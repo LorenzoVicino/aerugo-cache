@@ -32,16 +32,11 @@ impl Default for StoreConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum EvictionPolicy {
+    #[default]
     NoEviction,
     AllKeysRandom,
-}
-
-impl Default for EvictionPolicy {
-    fn default() -> Self {
-        Self::NoEviction
-    }
 }
 
 impl EvictionPolicy {
