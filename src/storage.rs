@@ -498,11 +498,9 @@ fn enforce_memory_limit(
 
     match config.eviction_policy {
         EvictionPolicy::NoEviction => Err(StoreError::OutOfMemory),
-        EvictionPolicy::AllKeysRandom => evict_until_within_limit(
-            entries,
-            max_memory_bytes,
-            protected_key,
-        ),
+        EvictionPolicy::AllKeysRandom => {
+            evict_until_within_limit(entries, max_memory_bytes, protected_key)
+        }
     }
 }
 
@@ -575,11 +573,10 @@ impl Value {
     fn estimated_memory_bytes(&self) -> usize {
         match self {
             Self::String(value) => value.len(),
-            Self::List(list) => {
-                list.iter()
-                    .map(|value| value.len() + LIST_ITEM_OVERHEAD_BYTES)
-                    .sum()
-            }
+            Self::List(list) => list
+                .iter()
+                .map(|value| value.len() + LIST_ITEM_OVERHEAD_BYTES)
+                .sum(),
         }
     }
 
@@ -788,7 +785,10 @@ mod tests {
     async fn stats_report_keyspace_shape() {
         let store = MemoryStore::new();
 
-        store.set("project".to_string(), b"aerugo-cache".to_vec()).await.unwrap();
+        store
+            .set("project".to_string(), b"aerugo-cache".to_vec())
+            .await
+            .unwrap();
         store
             .rpush("events".to_string(), vec![b"one".to_vec(), b"two".to_vec()])
             .await
